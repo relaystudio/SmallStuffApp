@@ -11,7 +11,8 @@ console.log("mongodb://" + config.user + ":" + config.pass + "@linus.mongohq.com
 mongoose.connect("mongodb://" + config.user + ":" + config.pass + "@linus.mongohq.com:10084/calc_test")
 
 var Schema = mongoose.Schema
-  , ObjectId = Schema.ObjectId;
+  , ObjectId = Schema.ObjectId
+  , objId = require('mongoose').Types.ObjectId; 
 
 var userSchema = new Schema({
     userId    : ObjectId
@@ -30,8 +31,10 @@ var pairSchema = new Schema({
 var itemSchema = new Schema({
     userId   : ObjectId 
   , pairId   : ObjectId
-  , date     : Date
-  , amount   : String
+  , netVal   : 0
+  , weight   : { type: Number, default: .5 } // Weighting of how much goes into the calc
+  , date     : { type: Date, default: Date.now }
+  , amount   : Number
   , type     : String
 });
 
@@ -62,8 +65,8 @@ app.get('/api/user/:userId', function(req,res) {
   userModel.findOne({email : req.params.userId}, function(err, result) {
     if(!result) user = "No user"
     else user = result;
+    res.send(user)
   });
-  res.send(user)
 });
 
 
@@ -74,10 +77,9 @@ app.get('/api/email/:email', function(req,res) {
   userModel.find( { email : req.params.email} , function(err, result) {
     if(!result) user = "no user"
     else user = result;
+    console.log(user);
+    res.send(user);
   });
-
-  console.log(user);
-  res.send(user);
 }); 
 
 // Create an account
@@ -90,7 +92,7 @@ app.post('/api/user', function(req,res) {
   }, function(err, user) {
     if(err) return handleError(err);
     console.log("User saved: " + user);
-  }) 
+  }); 
 });
 
 // Make a new pairing on the account
@@ -105,8 +107,8 @@ app.post('/api/makePair', function(req,res) {
   }, function(err, user) {
     if(err) console.log(err);
     console.log("User saved : " + users);
-  })
-})
+  });
+});
 
 
 // Gets a list of items for that user
@@ -133,93 +135,106 @@ app.get('/api/list/:userid/:page?', function(req,res) {
 app.post('/api/addItem', function(req,res) {
 //:userid/:amount/:type/:date
   var userId = req.body.userid || 0;
-  var pairId = req.body.pairId || 0;
-  var date = req.body.date || new Date().now();
+  var date = req.body.date || new Date();
   var amount = req.body.amount || 0;
   var type = 0;
-  itemModel.create({
-    userId         : userid
-  , pairId         : 0
-  , date           : date
-  , amount         : amount
-  , type           : type
-  }, function(err, user) {
-    if(err) console.log(err);
-    //console.log("Item saved : " + users);
-  })
+  var weight = req.body.weight || 0.5; // Default weight is .5
+  var netVal = amount * weight; // ( (1 - weight) * 2 ); // Probably not right...
 
+ getPairId(userId, function(pairId) {
+    console.log("Pair id");
+    itemModel.create({
+      userId         : userId
+    , pairId         : pairId
+    , date           : date
+    , weight         : weight
+    , netVal         : netVal
+    , amount         : amount
+    , type           : type
+    }, function(err, user) {
+      if(err) console.log(err);
+      console.log("Item saved : " + user);
+    })
+    res.send("Okay")
+ }) || 0; // Checks if there is a pair id
 
 });
 
 
-app.get('/api/difference/:userid/:difference', function(req,res) {
+app.get('/api/difference/:userid', function(req,res) {
 
   var diff;
 
-/*
-var itemSchema = new Schema({
-    userId   : ObjectId 
-  , pairId   : ObjectId
-  , date     : Date
-  , amount   : String
-  , type     : String
-});
-*/
-
-itemModel.aggregate([
-        { $group: {
-            userId: '$userId',
-            amount: { $avg: '$amount'}
-        }}
-    ], function (err, results) {
-        if (err) console.error(err);
-        else console.log(results);
-        
-    }
-);
-
-  res.send(diff);
-});
-
-app.get('/api/getTestData', function(req,res) {
-var testdata = [
-  { 
-    'userId' : '01234'
-    , 'date' : new Date(2013,1,1).getUTCDate()
-    , 'amount' : '24.99'
-    , 'type' : 4 
-  }, {
-    'userId' : '01234'
-    , 'date' : new Date(2013,1,10).getUTCDate()
-    , 'amount' : '24.99'
-    , 'type' : 4 
-  }, {
-    'userId' : '43210'
-    , 'date' : new Date(2013,1,12).getUTCDate()
-    , 'amount' : '24.99'
-    , 'type' : 3 
-  }, {
-    'userId' : '01234'
-    , 'date' : new Date(2013,1,15).getUTCDate()
-    , 'amount' : '24.99'
-    , 'type' : 3 
-  }
-]
-
-  res.send(testdata)
-}) 
-
-
-function getPairId(userid) {
-  var pairId;
-  pairModel.findOne({'userId' : req.params.userid}, function(err, pair) {
-    if(err) pairId = null
-    else pairId = pair.pairId
+  getPairId(req.params.userid, function(pairId) {
+    calcDifference(pairId, function(difference) {
+      res.send(difference);
+    });
   });
-  return pairId;
+});
+
+
+function getPairId(userid, callback) {
+  var pairId;
+  pairModel.findOne({users : userid}, function(err, pair) {
+    if(err) console.log(err);
+    pairId = pair._id;
+    console.log("Found " + pairId);
+    //return pairId;
+    callback(pairId);
+  });
 }
 
+function calcDifference(pairId, callback) {
+  var users = [];
+  var difference;
 
+  pairModel.findOne({_id : pairId}, function(err, pair) { // Find the user objects
+    if(err) console.log(err);
+    
+    console.log("resturned " + pair);
+    var userIds = JSON.stringify(pair["users"]).split(',');
+    console.log("Parsed to " + userIds)
+    var o = [];
+    for(var key in userIds) {
+
+        o[key] = {};
+        o[key].theUserId = userIds[key].match('\"(.*?)\"')[1];
+        o[key].map = function () { emit(this.netVal, 1) }
+        o[key].reduce = function (k, vals) { return vals.length }
+        o[key].query = function() { userId : o[key].theUserId }
+        console.log("userId found " + o[key].theUserId);
+
+    } // end user loop
+
+    for( var key in o) {
+
+        itemModel.aggregate(
+              { $match: { userId: objId.fromString(o[key].theUserId) } }
+            , { $group: { _id: "$userId",
+                grossTotal: { $sum: '$amount' }, 
+                weightedTotal: {$sum: '$netVal'},
+                averageWeight: {$avg: '$weight'} }
+              }
+
+          // , { $project: { userId: 0, netVal: 1 }}
+          , function (err, res) {
+          if (err) console.log(err);
+          console.log(res); // [ { maxAge: 98 } ]
+        });
+
+
+
+// Tried map reduce, but kinda got it wrong...
+/*        itemModel.mapReduce(o[key], function (err, results) {
+          if(err) console.log(err);
+          console.log("Res for " + o[key].theUserId + ": ");
+          console.log(results)
+        })*/
+    }
+  })
+
+  callback(difference);
+}
 
 http.createServer(app).listen(app.get('port'), function(){
   console.log("Express server listening on port " + app.get('port'));
