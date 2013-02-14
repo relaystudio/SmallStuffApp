@@ -220,6 +220,8 @@ function calcDifference(pairId, callback) {
           , function (err, res) {
           if (err) console.log(err);
           console.log(res); // [ { maxAge: 98 } ]
+
+          callback(res);
         });
 
 
@@ -232,8 +234,6 @@ function calcDifference(pairId, callback) {
         })*/
     }
   })
-
-  callback(difference);
 }
 
 http.createServer(app).listen(app.get('port'), function(){
